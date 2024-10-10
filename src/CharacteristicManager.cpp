@@ -1,3 +1,5 @@
+// src/CharacteristicManager.cpp
+
 #include "CharacteristicManager.h"
 #include "DbusConnection.h"
 #include "Utils.h"
@@ -81,7 +83,7 @@ bool CharacteristicManager::listAllCharacteristics()
     dbus_message_unref(reply_device);
 
     // Extract service paths
-    std::vector<std::string> servicePaths = extractChildPaths(xmlString, devicePath);
+    std::vector<std::string> servicePaths = Utils::extractChildPaths(xmlString, devicePath);
 
     std::cout << "[CharacteristicManager] Found " << servicePaths.size() << " service(s) under " << devicePath << "." << std::endl;
 
@@ -144,7 +146,7 @@ bool CharacteristicManager::listAllCharacteristics()
         dbus_message_unref(reply_service);
 
         // Extract characteristic paths
-        std::vector<std::string> charPaths = extractChildPaths(xmlServiceString, servicePath);
+        std::vector<std::string> charPaths = Utils::extractChildPaths(xmlServiceString, servicePath);
 
         std::cout << "[CharacteristicManager] Found " << charPaths.size() << " characteristic(s) under " << servicePath << "." << std::endl;
 
@@ -207,7 +209,7 @@ bool CharacteristicManager::listAllCharacteristics()
                         std::string charUUID(uuidCStr);
 
                         // Convert UUID to lowercase for consistent mapping
-                        std::string lowerUUID = toLower(charUUID);
+                        std::string lowerUUID = Utils::toLower(charUUID);
 
                         // Store the mapping
                         uuidToPathMap[lowerUUID] = charPath;

@@ -1,11 +1,13 @@
+// src/BLEManager.cpp
+
 #include "BLEManager.h"
 #include "Utils.h"
 #include "DbusConnection.h"
 #include "CharacteristicManager.h"
-#include "ESP32PipeManager.h"
-#include "DeviceManager.h" // Add this line to include the DeviceManager class
+#include "PipeManager.h"
+#include "DeviceManager.h" // Ensure this inclusion if DeviceManager interacts with BLEManager
 #include <iostream>
-#include <cstring> // Add this line to include the cstring header for strcmp
+#include <cstring> // For strcmp
 
 // Constructor: Initializes member variables
 BLEManager::BLEManager()
@@ -39,62 +41,49 @@ bool BLEManager::initialize()
         return false;
     }
 
+    // Initialize PipeManager
+    pipeManager = new PipeManager();
+
     return true;
 }
 
-// Connect to a specific device
-bool BLEManager::connectToDevice(const BluetoothDevice &device)
+// Connect to a device by its MAC address
+bool BLEManager::connectToDevice(const std::string &macAddress)
 {
-    std::cout << "[BLEManager] Starting handshake with device: " << device.name << " (" << device.path << ")" << std::endl;
-
-    if (!charManager || !pipeManager)
+    // Assuming BLEManager has a method to get devices by MAC
+    std::vector<BluetoothDevice> devices = listConnectedDevices();
+    for (const auto &device : devices)
     {
-        std::cerr << "[BLEManager] CharacteristicManager or ESP32PipeManager is not initialized." << std::endl;
+        if (device.macAddress == macAddress)
+        {
+            selectedDevicePath = device.path;
+            std::cout << "[BLEManager] Selected device: " << device.name << " [" << device.macAddress << "]" << std::endl;
+            charManager = new CharacteristicManager(*dbusConn, selectedDevicePath);
+            return true;
+        }
+    }
+    std::cerr << "[BLEManager] Device with MAC address " << macAddress << " not found." << std::endl;
+    return false;
+}
+
+// Initialize the device by scanning for its characteristics
+bool BLEManager::initializeDevice()
+{
+    if (!charManager || selectedDevicePath.empty())
+    {
+        std::cerr << "[BLEManager] No device selected for initialization." << std::endl;
         return false;
     }
 
-    // Perform the handshake using the ESP32 handshake characteristics
-    ESP32Pipes pipes = pipeManager->getESP32Pipes();
+    std::cout << "[BLEManager] Listing all characteristics for device: " << selectedDevicePath << std::endl;
 
-    if (pipes.handshake_rx.empty() || pipes.handshake_tx.empty())
+    if (!charManager->listAllCharacteristics())
     {
-        std::cerr << "[BLEManager] Handshake RX or TX paths are not initialized." << std::endl;
+        std::cerr << "[BLEManager] Failed to list characteristics." << std::endl;
         return false;
     }
 
-    // Send handshake message to ESP32 (to RX characteristic)
-    std::string handshakeMessage = "Handshake_Request";
-    std::cout << "[BLEManager] Sending handshake request to characteristic at: " << pipes.handshake_rx << std::endl;
-
-    if (!charManager->writeCharacteristic(pipes.handshake_rx, handshakeMessage))
-    {
-        std::cerr << "[BLEManager] Failed to send handshake request." << std::endl;
-        return false;
-    }
-
-    // Read the handshake response from ESP32 (from TX characteristic)
-    std::string handshakeResponse;
-    std::cout << "[BLEManager] Waiting for handshake response from characteristic at: " << pipes.handshake_tx << std::endl;
-
-    if (!charManager->readCharacteristic(pipes.handshake_tx, handshakeResponse))
-    {
-        std::cerr << "[BLEManager] Failed to receive handshake response." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Handshake response received: " << handshakeResponse << std::endl;
-
-    // Validate the response
-    if (handshakeResponse == "Handshake_OK")
-    {
-        std::cout << "[BLEManager] Handshake successful." << std::endl;
-        return true;
-    }
-    else
-    {
-        std::cerr << "[BLEManager] Handshake failed or invalid response." << std::endl;
-        return false;
-    }
+    return true;
 }
 
 // List all connected Bluetooth devices (this is the low-level function that interacts with D-Bus)
@@ -148,7 +137,7 @@ std::vector<BluetoothDevice> BLEManager::listConnectedDevices()
     dbus_message_unref(reply);
 
     // Extract the child paths from the introspection XML (this should give us device paths)
-    std::vector<std::string> devicePaths = extractChildPaths(xmlString, "/org/bluez/hci0");
+    std::vector<std::string> devicePaths = Utils::extractChildPaths(xmlString, "/org/bluez/hci0");
 
     // Now check for connected devices and get their name by querying their properties
     for (const std::string &devicePath : devicePaths)
@@ -277,6 +266,7 @@ bool BLEManager::listAllCharacteristics()
 
     std::cout << "[BLEManager] Listing all characteristics for device: " << selectedDevicePath << std::endl;
 
+    // Initialize the CharacteristicManager
     charManager = new CharacteristicManager(*dbusConn, selectedDevicePath);
     if (!charManager->listAllCharacteristics())
     {
@@ -284,123 +274,83 @@ bool BLEManager::listAllCharacteristics()
         return false;
     }
 
-    pipeManager = new ESP32PipeManager();
-    pipeManager->initializePipes(charManager->getUuidToPathMap());
+    // Get the UUID to Path map from the CharacteristicManager
+    std::map<std::string, std::string> uuidToPath = charManager->getUuidToPathMap();
+
+    // Register each characteristic as a pipe in PipeManager
+    for (const auto &entry : uuidToPath)
+    {
+        BLEPipe pipe;
+        pipe.uuid = entry.first;      // The UUID of the characteristic
+        pipe.path = entry.second;     // The D-Bus path of the characteristic
+        pipe.type = PipeType::Config; // Adjust the pipe type as per your characteristic's role
+
+        // Register the pipe in PipeManager
+        pipeManager->addPipe(pipe);
+
+        std::cout << "[BLEManager] Registered pipe with UUID: " << pipe.uuid
+                  << " and Path: " << pipe.path << std::endl;
+    }
+
     return true;
 }
 
-// Perform handshake with the device
-bool BLEManager::performHandshake()
+// Register a new pipe dynamically
+void BLEManager::registerPipe(const BLEPipe &pipe)
 {
-    std::cout << "[BLEManager] Performing handshake..." << std::endl;
-
-    if (!charManager || !pipeManager)
+    if (pipeManager)
     {
-        std::cerr << "[BLEManager] CharacteristicManager or ESP32PipeManager is not initialized." << std::endl;
-        return false;
-    }
-
-    ESP32Pipes pipes = pipeManager->getESP32Pipes();
-
-    // Ensure that both RX and TX paths are available
-    if (pipes.handshake_rx.empty() || pipes.handshake_tx.empty())
-    {
-        std::cerr << "[BLEManager] Handshake paths are not properly initialized." << std::endl;
-        return false;
-    }
-
-    // Write a handshake request to handshake_rx
-    std::string handshakeRequest = "Handshake_Request";
-    std::cout << "[BLEManager] Writing to characteristic at path: " << pipes.handshake_rx << " | Value: " << handshakeRequest << std::endl;
-    if (!charManager->writeCharacteristic(pipes.handshake_rx, handshakeRequest))
-    {
-        std::cerr << "[BLEManager] Failed to write handshake request." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Handshake request sent. Awaiting response..." << std::endl;
-
-    // Read handshake response from handshake_tx
-    std::string handshakeResponse;
-    std::cout << "[BLEManager] Reading from characteristic at path: " << pipes.handshake_tx << std::endl;
-    if (!charManager->readCharacteristic(pipes.handshake_tx, handshakeResponse))
-    {
-        std::cerr << "[BLEManager] Failed to read handshake response." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Handshake response received: " << handshakeResponse << std::endl;
-
-    if (handshakeResponse == "Handshake_OK")
-    {
-        std::cout << "[BLEManager] Handshake successful." << std::endl;
-        return true;
+        pipeManager->addPipe(pipe);
+        std::cout << "[BLEManager] Registered pipe with UUID: " << pipe.uuid << " and Path: " << pipe.path << std::endl;
     }
     else
     {
-        std::cerr << "[BLEManager] Handshake failed or invalid response." << std::endl;
+        std::cerr << "[BLEManager] PipeManager is not initialized." << std::endl;
+    }
+}
+
+// Write to a pipe by UUID
+bool BLEManager::writeToPipe(const std::string &uuid, const std::string &data)
+{
+    if (pipeManager && charManager)
+    {
+        BLEPipe pipe = pipeManager->getPipeByUUID(uuid);
+        if (pipe.uuid.empty())
+        {
+            std::cerr << "[BLEManager] No pipe found with UUID: " << uuid << std::endl;
+            return false;
+        }
+
+        std::cout << "[BLEManager] Writing to pipe UUID: " << uuid << " | Data: " << data << std::endl;
+        return charManager->writeCharacteristic(pipe.path, data);
+    }
+    else
+    {
+        std::cerr << "[BLEManager] PipeManager or CharacteristicManager is not initialized." << std::endl;
         return false;
     }
 }
 
-// Send a message to the device
-bool BLEManager::sendMessage(const std::string &message)
+// Read from a pipe by UUID
+bool BLEManager::readFromPipe(const std::string &uuid, std::string &data)
 {
-    std::cout << "[BLEManager] Sending message: " << message << std::endl;
-
-    if (!charManager || !pipeManager)
+    if (pipeManager && charManager)
     {
-        std::cerr << "[BLEManager] CharacteristicManager or ESP32PipeManager is not initialized." << std::endl;
+        BLEPipe pipe = pipeManager->getPipeByUUID(uuid);
+        if (pipe.uuid.empty())
+        {
+            std::cerr << "[BLEManager] No pipe found with UUID: " << uuid << std::endl;
+            return false;
+        }
+
+        std::cout << "[BLEManager] Reading from pipe UUID: " << uuid << std::endl;
+        return charManager->readCharacteristic(pipe.path, data);
+    }
+    else
+    {
+        std::cerr << "[BLEManager] PipeManager or CharacteristicManager is not initialized." << std::endl;
         return false;
     }
-
-    ESP32Pipes pipes = pipeManager->getESP32Pipes();
-
-    if (pipes.message.empty())
-    {
-        std::cerr << "[BLEManager] Message characteristic path is not set." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Writing to characteristic at path: " << pipes.message << " | Value: " << message << std::endl;
-    if (!charManager->writeCharacteristic(pipes.message, message))
-    {
-        std::cerr << "[BLEManager] Failed to write message." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Message sent successfully." << std::endl;
-    return true;
-}
-
-// Receive a message from the device
-bool BLEManager::receiveMessage(std::string &message)
-{
-    std::cout << "[BLEManager] Receiving message from device..." << std::endl;
-
-    if (!charManager || !pipeManager)
-    {
-        std::cerr << "[BLEManager] CharacteristicManager or ESP32PipeManager is not initialized." << std::endl;
-        return false;
-    }
-
-    ESP32Pipes pipes = pipeManager->getESP32Pipes();
-
-    if (pipes.message.empty())
-    {
-        std::cerr << "[BLEManager] Message characteristic path is not set." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Reading from characteristic at path: " << pipes.message << std::endl;
-    if (!charManager->readCharacteristic(pipes.message, message))
-    {
-        std::cerr << "[BLEManager] Failed to read message." << std::endl;
-        return false;
-    }
-
-    std::cout << "[BLEManager] Received message: " << message << std::endl;
-    return true;
 }
 
 // Recursively print the D-Bus object tree
@@ -422,16 +372,6 @@ std::string BLEManager::getSelectedDevicePath() const
 void BLEManager::setSelectedDevicePath(const std::string &devicePath)
 {
     selectedDevicePath = devicePath;
-}
-
-// Getter for ESP32 Pipes
-ESP32Pipes BLEManager::getESP32Pipes() const
-{
-    if (!pipeManager)
-    {
-        return ESP32Pipes();
-    }
-    return pipeManager->getESP32Pipes();
 }
 
 // Function to list available methods and interfaces
@@ -486,4 +426,21 @@ void BLEManager::listAvailableMethods(const std::string &objectPath)
     }
 
     dbus_message_unref(reply);
+}
+
+// Getter for CharacteristicManager
+CharacteristicManager *BLEManager::getCharacteristicManager() const
+{
+    return charManager;
+}
+
+// Disconnect from the BLE device
+void BLEManager::disconnectDevice()
+{
+    selectedDevicePath.clear();
+    if (charManager)
+    {
+        delete charManager;
+        charManager = nullptr;
+    }
 }

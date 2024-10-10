@@ -1,0 +1,7 @@
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/BLEFramework.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/edit_cache.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/rebuild_cache.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/list_install_components.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/install.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/install/local.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/framework/build/CMakeFiles/install/strip.dir

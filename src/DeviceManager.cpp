@@ -1,6 +1,7 @@
 // src/DeviceManager.cpp
 
 #include "DeviceManager.h"
+#include "BLEManager.h"
 #include <iostream>
 
 DeviceManager::DeviceManager(BLEManager &bleMgr)
@@ -31,7 +32,7 @@ std::vector<BluetoothDevice> DeviceManager::listConnectedDevices()
     return devices;
 }
 
-// Connect to the selected device and initiate the handshake
+// Connect to the selected device without handshake
 bool DeviceManager::selectDevice()
 {
     std::cout << "[DeviceManager] Selecting device..." << std::endl;
@@ -48,10 +49,10 @@ bool DeviceManager::selectDevice()
     bleManager.setSelectedDevicePath(device.path);
     std::cout << "[DeviceManager] Selected Device: " << device.name << " (" << device.path << ")" << std::endl;
 
-    // Initiate handshake with the device
-    if (!bleManager.connectToDevice(device))
+    // Establish connection to the device without performing handshake
+    if (!bleManager.connectToDevice(device.macAddress))
     {
-        std::cerr << "[DeviceManager] Handshake failed with device: " << device.name << std::endl;
+        std::cerr << "[DeviceManager] Failed to connect to device: " << device.name << std::endl;
         return false;
     }
 

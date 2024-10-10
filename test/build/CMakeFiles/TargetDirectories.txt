@@ -1,0 +1,3 @@
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/test/build/CMakeFiles/test_ble.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/test/build/CMakeFiles/edit_cache.dir
+/share/projects/ESP/CODE/LINUX/DBUS-BLE-Connection/test/build/CMakeFiles/rebuild_cache.dir
